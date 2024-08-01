@@ -1,0 +1,109 @@
+name: prod-uz
+on:
+  workflow_run:
+    workflows: [ci]
+    types:
+      - completed
+    branches:
+      - master
+
+env:
+  PACT_PUBLISH_PROVIDER_CONTRACT: 'true'
+  PACT_PUBLISH_CONSUMER_CONTRACT: 'true'
+  PACT_BROKER_BASE_URL: ${{ secrets.PACTFLOW_HOST_URL }}
+  PACT_BROKER_TOKEN: ${{ secrets.PACTFLOW_TOKEN_FOR_CI_CD }}
+  ARGOCD_APP_NAME: '${{ github.workflow }}-space-ai-model-gach'
+
+jobs:
+  release:
+    runs-on: [self-hosted, ubuntu, int]
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+    - name: Checkout main repository
+      uses: actions/checkout@v3
+      with:
+        ref: ci
+        path: main
+
+    - name: Set env variables
+      working-directory: ./main
+      run: |
+        echo "github_tag_sha=$(git rev-parse HEAD)" >> $GITHUB_ENV
+        echo "GIT_COMMIT=$(git rev-parse HEAD)" >> $GITHUB_ENV
+        echo "github_tag_ref_name=$(git describe --tags)" >> $GITHUB_ENV
+
+    # - name: Can I deploy to prod-uz?
+    #   if: ${{ env.PACT_PUBLISH_PROVIDER_CONTRACT == 'true' || env.PACT_PUBLISH_CONSUMER_CONTRACT == 'true' }}
+    #   working-directory: ./main
+    #   env:
+    #     ENVIRONMENT: prod-uz
+    #   run: |
+    #     chmod +x ./Makefile
+    #     make can_i_deploy
+
+    - name: Checkout infra repository
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+        repository: ${{ github.repository }}.infra
+        token: ${{ secrets.ACTIONS_TOKEN }}
+
+    - name: Update prod-uz Helm values
+      uses: Nextdoor/helm-set-image-tag-action@main
+      with:
+        values_files: values/prod-uz.yaml
+        tag_keys: .containerImage.tag, .envVars.GIT_COMMIT
+        tag_value: "${{ env.github_tag_sha }}"
+        commit_branch: master
+        commit_tag: ${{ env.github_tag_ref_name }}-chart
+        verbose: false
+        bump_level: null
+
+    - name: Setup Argo CD CLI
+      uses: clowdhaus/argo-cd-action/@main
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        version: 2.5.5
+        command: version
+        options: --client
+
+    - name: Login to Argo CD
+      uses: clowdhaus/argo-cd-action/@main
+      with:
+        version: 2.5.5
+        command: login argo.shared.int.spaceneobank.com:443 --username admin --password ${{ secrets.ARGOCD_ADMIN_TOKEN }} --insecure
+    
+    - name: Sync Argo CD
+      uses: clowdhaus/argo-cd-action/@main
+      with:
+        version: 2.5.5
+        command: app sync ${{ env.ARGOCD_APP_NAME }}
+
+    - name: Wait for Argo CD Sync
+      uses: clowdhaus/argo-cd-action/@main
+      with:
+        version: 2.5.5
+        command: app wait ${{ env.ARGOCD_APP_NAME }}
+
+    - name: Checkout main repository
+      uses: actions/checkout@v3
+      with:
+        ref: ${{ env.github_tag_sha }}
+        path: main
+        token: ${{ secrets.ACTIONS_TOKEN }}
+
+    # - name: Record deployment for prod-uz
+    #   if: ${{ env.PACT_PUBLISH_PROVIDER_CONTRACT == 'true' || env.PACT_PUBLISH_CONSUMER_CONTRACT == 'true' }}
+    #   working-directory: ./main
+    #   env:
+    #     ENVIRONMENT: prod-uz
+    #   run: |
+    #     chmod +x ./Makefile
+    #     make record_deployment
+
+    - name: Create tag for prod-uz
+      working-directory: ./main
+      run: |
+        git tag -f prod-uz
+        git push -f origin prod-uz

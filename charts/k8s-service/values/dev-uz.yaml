@@ -1,0 +1,40 @@
+applicationName: "[[NamespaceProjectNameLower]]"
+applicationPath: "/[[ProjectNameLower]]"
+
+containerImage:
+  repository: spaceinternational/[[NamespaceProjectNameLower]]
+  tag: ""
+  pullPolicy: Always
+
+replicaCount: 1
+
+istio:
+  enabled: true
+
+terminationGracePeriodSeconds: 180
+
+envVars:
+  PATH_BASE: "/[[ProjectNameLower]]"
+  GIT_COMMIT: ""
+
+serviceAccount:
+  name: "[[NamespaceProjectNameLower]]"
+  create: true
+  annotations: {}
+  labels: {}
+
+vault:
+  enabled: false
+  volumePath: "/settings"
+  secrets:
+    - name: "kv/GlobalSecrets"
+      mountFileName: "globalsettings.json"
+    - name: "kv/ServiceSecrets/[[NamespaceProjectNameLower]]"
+      mountFileName: "appsettings.json"
+
+service:
+  enabled: true
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/path: "/[[ProjectNameLower]]/metrics"
+    prometheus.io/port: "80"

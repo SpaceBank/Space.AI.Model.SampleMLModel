@@ -1,0 +1,59 @@
+name: ci
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'master'
+      - 'development'
+    paths-ignore:
+      - 'cookiecutter.json'
+      - 'README.md'
+      - '**.yaml'
+      - '**.yml'
+      - '.editorconfig'
+
+env:
+  SPACE_NUGET_URL: ${{ vars.SPACE_NUGET_URL }}
+  PROJECT_NAME: '[[Namespace]].[[ProjectName]]'
+  DOCKER_HUB_ID: ${{ secrets.DOCKER_HUB_ID }}
+  DOCKER_HUB_SECRET: ${{ secrets.DOCKER_HUB_SECRET }}
+  DOCKER_HUB_REPOSITORY: ${{ secrets.DOCKER_HUB_REPOSITORY }}
+  IMAGE_NAME: '[[NamespaceProjectNameLower]]'
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  PACT_PUBLISH_PROVIDER_CONTRACT: 'true'
+  PACT_PUBLISH_CONSUMER_CONTRACT: 'true'
+  PACT_BROKER_BASE_URL: ${{ secrets.PACTFLOW_HOST_URL }}
+  PACT_BROKER_TOKEN: ${{ secrets.PACTFLOW_TOKEN_FOR_CI_CD }}
+  GIT_COMMIT: ${{ github.sha }}
+
+jobs:
+  push-docker-image:
+    runs-on: [self-hosted, ubuntu, int]
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Copy CA Certificate
+      run: echo "${{ secrets.SPACEINTL_ROOT_CA }}" > ca_cert.pem
+
+    - name: Build docker image
+      run: docker build . --file Dockerfile --tag $IMAGE_NAME
+
+    - name: Scan docker image with Trivy
+      uses: aquasecurity/trivy-action@0.11.2
+      with:
+        image-ref: '${{ env.IMAGE_NAME }}'
+        vuln-type: 'os,library'
+
+    - name: Push docker image
+      run: |
+        docker login -u $DOCKER_HUB_ID -p $DOCKER_HUB_SECRET
+        IMAGE_ID=$DOCKER_HUB_REPOSITORY/$IMAGE_NAME
+        VERSION="${{ github.sha }}"
+        docker tag $IMAGE_NAME $IMAGE_ID:$VERSION
+        docker push $IMAGE_ID:$VERSION
+
+    - name: Create tag for ci
+      run: |
+        git tag -f ci
+        git push -f origin ci
